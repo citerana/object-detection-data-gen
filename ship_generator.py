@@ -70,8 +70,8 @@ def scale_to_pixel(rect, height_scale, width_scale):
     return [int(pixel) for pixel in pixels]
 
 
-def window_ordered_coords(rect):
-    return ((rect[2], rect[3]), (rect[0], rect[1]))
+def window_ordered_coords(rasterio_bbox):
+    return ((rasterio_bbox[3], rasterio_bbox[1]), (rasterio_bbox[0], rasterio_bbox[2]))
 
 
 def bbox_ordered_coords(rect):
@@ -123,7 +123,6 @@ def expand_window(bbox):
 def create_valid_windows(chips, ship_boxes):
     windows = []
     for chip in chips:
-
         valid_window = True
         window_box = rasterio.coords.BoundingBox(*bbox_ordered_coords(chip))
         for ship in ship_boxes:
@@ -138,16 +137,60 @@ def create_valid_windows(chips, ship_boxes):
     return windows
 
 
-def write_chip_and_ships_to_file(chip_ind, mask, ship_boxes, chip_ships_dict):
-    ships_in_chip = []
-    for ship in ship_boxes:
-        if not rasterio.coords.disjoint_bounds(window_box, ship):
-            ships_in_chip.append(ship[0], ship[2], ship[3], ship[1])
-
-    chip_ships_dict[chip_ind] = ships_in_chip
+def write_chip_and_ships_to_file(chip_ind, mask, window_box, ship_boxes, chip_ships_dict):
+    pass
 
 
 def generate_chips():
+    dataset_path = '/home/annie/Data/datasets/planet_ships/singapore'
+    csv_fields = ['coordinates']
+    chip_ships_dict = {}
+    chip_ind = 0
+
+    for img_ind, folder_name in enumerate(folders[0]):
+        folder_path = join(dataset_path, folder_name) + '/'
+        img_name = data[img_ind][0]
+        img_corners = data[img_ind][1]
+        csv_name = 'ships_' + str(img_ind) + '.csv'
+        src_path = folder_path + img_name
+        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
+
+        with rasterio.open(src_path) as src_ds:
+            # b, g, r, _ = (src_ds.read(k) for k in (1, 2, 3))
+            b, g, r, _ = src_ds.read()
+
+        bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
+        ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(bbox))
+                      for bbox in bbox_coords]
+        chip_coords = [expand_window(bbox) for bbox in bbox_coords]
+
+        windows = create_valid_windows(chip_coords, ship_boxes)
+#        window_mats = [src_ds.read(1, window=window) for window in windows]
+        masks = [window_ordered_coords(window) for window in windows]
+#        print(window_mats[0])
+        print(masks[0])
+        print(src_ds.shape)
+        print(src_path)
+        for mask, window_box in zip(masks, windows):
+            ships_in_chip = []
+            for ship in ship_boxes:
+                if not rasterio.coords.disjoint_bounds(window_box, ship):
+                    ships_in_chip.append(ship[0], ship[2], ship[3], ship[1])
+
+            chip_ships_dict[chip_ind] = ships_in_chip
+            write_path = dataset_path + '/train/' + str(chip_ind) + '.jpg'
+            with rasterio.open(
+                    write_path, 'w',
+                    driver='jpeg', width=256, height=256, count=3,
+                    dtype='uint8') as dst:
+                for k, arr in [(1, b), (2, g), (3, r)]:
+                    dst.write(src_ds, window=mask, indexes=3)
+                dst.close()
+            # write_chip_and_ships_to_file(chip_ind, mask, window_box, \
+            # ship_boxes, chip_ships_dict)
+
+
+def main():
     """
     for each scene
         load .csv of bounding boxes into pandas
@@ -159,37 +202,6 @@ def generate_chips():
                 check if the image has gone off the edge of the scene
                     if so, convert blank areas into neutral color
                     map all known ships in chip to a CSV
-    """
-
-    dataset_path = '/home/annie/Data/datasets/planet_ships/singapore'
-    csv_fields = ['coordinates']
-    chip_ships_dict = {}
-    chip_ind = 0
-
-    for img_ind, folder_name in enumerate(folders):
-        folder_path = join(dataset_path, folder_name) + '/'
-        img_name = data[img_ind][0]
-        img_corners = data[img_ind][1]
-        csv_name = 'ships_' + str(img_ind) + '.csv'
-        src_path = folder_path + img_name
-        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
-
-        src_ds = rasterio.open(src_path)
-
-        bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
-        ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(bbox))
-                      for bbox in bbox_coords]
-        chip_coords = [expand_window(bbox) for bbox in bbox_coords]
-
-        windows = create_valid_windows(chip_coords, ship_boxes)
-        window_mats = [src_ds.read(1, window=window) for window in windows]
-        for mask in window_mats:
-            write_chip_and_ships_to_file(chip_ind, mask, ship_boxes, chip_ships_dict)
-
-    print(window_mats)
-
-def main():
-    """
         df_path = join(folder_path, csv_name)
         bbdf = pd.read_csv(df_path, skipinitialspace=True, usecols=csv_fields)
         # we're only interested in every other line of the csv
