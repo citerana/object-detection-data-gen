@@ -89,7 +89,7 @@ def convert_to_pixels(src_ds, ogr_filename, img_corners):
     height_scale, width_scale = img_h/coord_h, img_w/coord_w
 
     zeroed_coords = [points_from_rectangle(feat, image_corners[1], image_corners[2])
-                    for feat in ogr_dict['features']]
+                    for feat in ogr_dict['features'][::2]]
     pixel_coords = [scale_to_pixel(coords, height_scale, width_scale)
                     for coords in zeroed_coords]
 
@@ -121,6 +121,8 @@ def expand_window_with_offset(bbox):
 
 
 def expand_window_no_offset(bbox):
+    if bbox[0] - 128 < 0 or bbox[0] + 128 < 0 or bbox[1] - 128 < 0 or bbox[1] + 128 < 0:
+        return 0, 256, 0, 256
     return bbox[0] - 128, bbox[0] + 128, bbox[1] - 128, bbox[1] + 128
 
 
@@ -163,30 +165,35 @@ def generate_chips():
                           for bbox in bbox_coords]
             #chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
             chip_coords = [expand_window_no_offset(bbox) for bbox in bbox_coords]
+                # try filtering all the nones that are the result of failures
 
             windows = create_valid_windows(chip_coords, ship_boxes)
             masks = [window_ordered_coords(window) for window in windows]
 
+            #print(masks[0])
+            print(src_ds.shape)
             for mask, window_box in zip(masks, windows):
+                print(mask)
                 for ship in ship_boxes:
                     if not rasterio.coords.disjoint_bounds(window_box, ship):
                         chip_ships_list.append((str(chip_ind), ship[0], ship[1], ship[2], ship[3]))
-                img_write_path = dataset_path + '/train/' + str(chip_ind) + '.png'
+                img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
                 with rasterio.open(
-                        # write_path, 'w',
-                        # driver='GTiff', width=256, height=256, count=3,
-                        # dtype='uint16') as dst:
-                    # dst.write(src_ds.read(1, window=mask), indexes=1) #b
-                    # dst.write(src_ds.read(2, window=mask), indexes=2) #g
-                    # dst.write(src_ds.read(3, window=mask), indexes=3) #r
-                        write_path, 'w',
-                        driver='png', width=256, height=256, count=3,
-                        dtype='uint8') as dst:
-                    dst.write(src_ds.read(3, window=mask).astype(np.uint8), indexes=1) #b
-                    dst.write(src_ds.read(2, window=mask).astype(np.uint8), indexes=2) #g
-                    dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
-                    dst.close()
+                        img_write_path, 'w',
+                        driver='GTiff', width=256, height=256, count=3,
+                        dtype='uint16') as dst:
+                    dst.write(src_ds.read(1, window=mask), indexes=1) #b
+                    dst.write(src_ds.read(2, window=mask), indexes=2) #g
+                    dst.write(src_ds.read(3, window=mask), indexes=3) #r
+                    #     img_write_path, 'w',
+                    #     driver='png', width=256, height=256, count=3,
+                    #     dtype='uint8') as dst:
+                    # dst.write(src_ds.read(3, window=mask).astype(np.uint8), indexes=1) #b
+                    # dst.write(src_ds.read(2, window=mask).astype(np.uint8), indexes=2) #g
+                    # dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
+                    # dst.close()
                 chip_ind += 1
+                print(str(chip_ind) + " chip written")
     # Once all chips have been created, write ship loc dataframe to csv
     labels = ['image', 'ship (l, t, r, b)']
     df = pd.DataFrame.from_records(ships_in_chip, columns=labels)
