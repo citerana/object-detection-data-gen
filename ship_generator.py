@@ -8,6 +8,10 @@ import pandas as pd
 import rasterio
 import json
 import gdal
+from shapely import geometry
+from shapely.ops import transform
+import pyproj
+from functools import partial
 
 from draw_bboxes import draw_bounding_boxes_on_image
 from data_extent import data, folders
@@ -66,53 +70,69 @@ def match_percent_to_pixel(rect, img_w, img_h):
     return [int(pixel) for pixel in pixels]
 
 
-def convert_to_pixels(src_ds, ogr_filename, img_corners):
-    import geopyspark as gps
-    from pyspark import SparkContext
-    import numpy as np
-    import os
-    from datetime import datetime
-    from shapely.geometry import mapping, shape, Point
-    import pyproj
-    from shapely.ops import transform
-    from functools import partial
-    import urllib.request, json
-    from geonotebook.wrappers import TMSRasterData
-    from PIL import Image
+def create_coordinate_rectangle(rectangle):
+    rectangle_js = rectangle['geometry']['coordinates'][0]
+    return [
+        min(rectangle_js[0][0], rectangle_js[1][0]), # minX/left
+        max(rectangle_js[0][0], rectangle_js[1][0]), # maxX/right
+        min(rectangle_js[0][1], rectangle_js[2][1]), # minY/bottom
+        max(rectangle_js[0][1], rectangle_js[2][1]) # maxY/top
+    ]
 
-    p = Point(-75.160674, 39.968145)
+
+def shapely_polygon_map_to_grid(rect):
+    """
+    shape: Shapely box geometry
+
+    returns transformed coordinates in [minx, maxx, miny, maxy]
+    """
+    shape = geometry.geo.box(*rect)
     project = partial(
             pyproj.transform,
-            pyproj.Proj(init='epsg:4326'),
-            pyproj.Proj(init='epsg:3857'))
-    p2 = transform(project, p)
-    logic(p2.x, p2.y)
+            pyproj.Proj(init='epsg:32648'),
+            pyproj.Proj(init='epsg:32648'))
+    new_shape = transform(project, shape)
+    # Note that a box [1,2,3,4] is altered and then dumped as
+    # [(3.0, 2.0), (3.0, 4.0), (1.0, 4.0), (1.0, 2.0), (3.0, 2.0)]
+    pts = geometry.base.dump_coords(shape)
 
-    """
+    return [pts[3][0], pts[3][1], pts[4][0], pts[1][1]]
+
+
+def convert_to_pixels(src_ds, ogr_filename, img_corners):
     img_h, img_w = src_ds.shape[0], src_ds.shape[1]
     with open(ogr_filename) as ogr:
         ogr_dict = json.load(ogr)
 
-    image_corners = get_image_corners(img_corners)
-    coord_w, coord_h = coordinate_width_and_height(image_corners)
+    # map attributes
+    # map_corners = get_image_corners(img_corners)
+    # map_w, map_h = coordinate_width_and_height(map_corners)
+    # grid attributes
+    grid_corners = get_image_corners(img_corners)
+    print(grid_corners)
+    grid_w, grid_h = coordinate_width_and_height(grid_corners)
 
     # Uses scaling up to convert from coords to pixels
-    height_scale, width_scale = img_h/coord_h, img_w/coord_w
-    zeroed_coords = [points_from_rectangle(feat, image_corners[1], image_corners[2])
+    height_scale, width_scale = img_h/grid_h, img_w/grid_w
+    zeroed_coords = [points_from_rectangle(feat, grid_corners[1], grid_corners[2])
                     for feat in ogr_dict['features'][::2]]
     pixel_coords = [scale_to_pixel(coords, height_scale, width_scale)
                     for coords in zeroed_coords]
 
     # Uses a percentile location to convert across units
-    percentile_coords = [percentiles_from_rectangle(feat, image_corners[1], image_corners[3], coord_w, coord_h)
-                         for feat in ogr_dict['features'][::2]]
-    #print(img_w, img_h)
-    #print(percentile_coords)
+    coord_rectangles = [create_coordinate_rectangle(feat) for feat in ogr_dict['features'][::2]]
+    print(coord_rectangles[0])
+    grid_rectangles = [shapely_polygon_map_to_grid(rect) for rect in coord_rectangles]
+    print(grid_rectangles[0])
+    percentile_coords = [percentiles_from_rectangle(feat, grid_corners[1], grid_corners[3], grid_w, grid_h)
+                         for rect in grid_rectangles]
+    #print(grid_w, grid_h)
+    print(percentile_coords[0])
     pixel_coords2 = [match_percent_to_pixel(coords, img_w, img_h) for coords in percentile_coords]
-    #print(pixel_coords2)
+    print(pixel_coords2[0])
 
     return pixel_coords2
-    """
+
 
 def window_ordered_coords(rasterio_bbox):
     # ymin, ymax, xmin, xmax
@@ -221,7 +241,7 @@ def generate_chips():
                     # dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
                     # dst.close()
                 chip_ind += 1
-                print(str(chip_ind) + " chip written")
+                # print(str(chip_ind) + " chip written")
         raw_input("Continue? ")
     # Once all chips have been created, write ship loc dataframe to csv
     print(chip_ships_list)
@@ -284,7 +304,7 @@ def main():
     name = folder_path + 'TC_NG_Baghdad_IQ_Geo.tif'
     """
 
-    draw_bboxes_on_scenes()
-    # generate_chips()
+    # draw_bboxes_on_scenes()
+    generate_chips()
 
 main()
