@@ -1,48 +1,24 @@
 # flake8: noqa
-from os.path import join, basename, splitext
+from os.path import join
 from random import randrange
 import csv
-import glob
 
 import numpy as np
-# import pandas as pd
+import pandas as pd
 import rasterio
 import json
 import gdal
-import struct
 
+from draw_bboxes import draw_bounding_boxes_on_image
 from data_extent import data, folders
 
 
-def gdal_transform(src_filename, ogr_filename):
-
-    pix = []
-    src_ds = gdal.Open(src_filename)
-    # = rasterio.open(src_filename)
-    gt = src_ds.GetGeoTransform()
-    rb = src_ds.GetRasterBand(1)
-
-    ds = ogr.Open(ogr_filename)
-    lyr = ds.GetLayer()
-    for feat in lyr:
-        geom = feat.GetGeometryRef()
-        mx, my = geom.GetX(), geom.GetY()  # coord in map units
-
-        # Convert from map to pixel coordinates.
-        # Only works for geotransforms with no rotation.
-        px = int((mx - gt[0]) / gt[1]) # x pixel
-        py = int((my - gt[3]) / gt[5]) # y pixel
-        pix.append([px, py])
-
-    return pix
-
-
-def get_image_corners(corners):
+def get_image_corners(x):
     return [
-        min(x[0] for x in corners), # minX
-        max(x[0] for x in corners), # maxX
-        min(x[1] for x in corners), # minY
-        max(x[1] for x in corners) # maxY
+        x[0][0], #minX
+        x[2][0],
+        x[1][1], #minY
+        x[0][1]
     ]
 
 
@@ -55,8 +31,8 @@ def points_from_rectangle(rectangle, maxXcoord, minYcoord):
     return [
         min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]), # minX/left
         max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]), # maxX/right
-        min(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord), # minY/top
-        max(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord) # maxY/bottom
+        min(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord), # minY/bottom
+        max(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord) # maxY/top
     ]
 
 
@@ -70,30 +46,87 @@ def scale_to_pixel(rect, height_scale, width_scale):
     return [int(pixel) for pixel in pixels]
 
 
-def window_ordered_coords(rasterio_bbox):
-    return ((rasterio_bbox[3], rasterio_bbox[1]), (rasterio_bbox[0], rasterio_bbox[2]))
+def percentiles_from_rectangle(rectangle, maxXcoord, maxYcoord, w, h):
+    rectangle_js = rectangle['geometry']['coordinates'][0]
+    return [
+        min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w, # minX/left
+        max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w, # maxX/right
+        min(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h, # minY/bottom
+        max(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h, # maxY/top
+    ]
 
 
-def bbox_ordered_coords(rect):
-    return rect[0], rect[3], rect[1], rect[2]
+def match_percent_to_pixel(rect, img_w, img_h):
+    pixels = []
+    pixels.append(rect[0]*img_w)
+    pixels.append(rect[1]*img_w)
+    pixels.append(rect[2]*img_h)
+    pixels.append(rect[3]*img_h)
+
+    return [int(pixel) for pixel in pixels]
 
 
 def convert_to_pixels(src_ds, ogr_filename, img_corners):
-    pix = []
+    import geopyspark as gps
+    from pyspark import SparkContext
+    import numpy as np
+    import os
+    from datetime import datetime
+    from shapely.geometry import mapping, shape, Point
+    import pyproj
+    from shapely.ops import transform
+    from functools import partial
+    import urllib.request, json
+    from geonotebook.wrappers import TMSRasterData
+    from PIL import Image
+
+    p = Point(-75.160674, 39.968145)
+    project = partial(
+            pyproj.transform,
+            pyproj.Proj(init='epsg:4326'),
+            pyproj.Proj(init='epsg:3857'))
+    p2 = transform(project, p)
+    logic(p2.x, p2.y)
+
+    """
     img_h, img_w = src_ds.shape[0], src_ds.shape[1]
     with open(ogr_filename) as ogr:
         ogr_dict = json.load(ogr)
 
     image_corners = get_image_corners(img_corners)
     coord_w, coord_h = coordinate_width_and_height(image_corners)
-    height_scale, width_scale = img_h/coord_h, img_w/coord_w
 
+    # Uses scaling up to convert from coords to pixels
+    height_scale, width_scale = img_h/coord_h, img_w/coord_w
     zeroed_coords = [points_from_rectangle(feat, image_corners[1], image_corners[2])
                     for feat in ogr_dict['features'][::2]]
     pixel_coords = [scale_to_pixel(coords, height_scale, width_scale)
                     for coords in zeroed_coords]
 
-    return pixel_coords
+    # Uses a percentile location to convert across units
+    percentile_coords = [percentiles_from_rectangle(feat, image_corners[1], image_corners[3], coord_w, coord_h)
+                         for feat in ogr_dict['features'][::2]]
+    #print(img_w, img_h)
+    #print(percentile_coords)
+    pixel_coords2 = [match_percent_to_pixel(coords, img_w, img_h) for coords in percentile_coords]
+    #print(pixel_coords2)
+
+    return pixel_coords2
+    """
+
+def window_ordered_coords(rasterio_bbox):
+    # ymin, ymax, xmin, xmax
+    return ((rasterio_bbox[3], rasterio_bbox[1]), (rasterio_bbox[0], rasterio_bbox[2]))
+
+
+def bbox_ordered_coords(rect):
+    # xmin, ymin, xmax, ymax
+    return rect[0], rect[3], rect[1], rect[2]
+
+
+def tf_ordered_coords(rect):
+    # ymin, xmin, ymax, xmax
+    return [rect[2], rect[0], rect[3], rect[1]]
 
 
 def check_in_bbox(x, y, bbox):
@@ -145,7 +178,6 @@ def create_valid_windows(chips, ship_boxes):
 
 def generate_chips():
     dataset_path = '/home/annie/Data/datasets/planet_ships/singapore'
-    csv_fields = ['coordinates']
     chip_ships_list = []
     chip_ind = 0
 
@@ -165,15 +197,11 @@ def generate_chips():
                           for bbox in bbox_coords]
             #chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
             chip_coords = [expand_window_no_offset(bbox) for bbox in bbox_coords]
-                # try filtering all the nones that are the result of failures
 
             windows = create_valid_windows(chip_coords, ship_boxes)
             masks = [window_ordered_coords(window) for window in windows]
 
-            #print(masks[0])
-            print(src_ds.shape)
             for mask, window_box in zip(masks, windows):
-                print(mask)
                 for ship in ship_boxes:
                     if not rasterio.coords.disjoint_bounds(window_box, ship):
                         chip_ships_list.append((str(chip_ind), ship[0], ship[1], ship[2], ship[3]))
@@ -194,11 +222,41 @@ def generate_chips():
                     # dst.close()
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
+        raw_input("Continue? ")
     # Once all chips have been created, write ship loc dataframe to csv
-    labels = ['image', 'ship (l, t, r, b)']
-    df = pd.DataFrame.from_records(ships_in_chip, columns=labels)
-    img_write_path = dataset_path + '/train/' + 'ship_locations.csv'
+    print(chip_ships_list)
+    csv_labels = ['image', 'ship (l, t, r, b)']
+    df = pd.DataFrame.from_records(chip_ships_list, columns=csv_labels)
+    csv_write_path = dataset_path + '/train/' + 'ship_locations.csv'
     df.to_csv(csv_write_path, index=False)
+
+
+def draw_bboxes_on_scenes():
+    _path = '/home/annie'
+
+    for img_ind, folder_name in enumerate(folders):
+        folder_path = join(dataset_path, folder_name) + '/'
+        img_name = data[img_ind][0]
+        img_corners = data[img_ind][1]
+        src_path = dataset_path + '/' + str(img_ind) + '.png'
+        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
+        img_write_path = '/home/annie/' + str(img_ind) + '.png'
+
+
+        with rasterio.open(src_path) as src_ds:
+            b, g, r, ir = (src_ds.read(k) for k in (1, 2, 3, 4))
+            pixel_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
+            bbox_coords = np.array([tf_ordered_coords(coords) for coords in pixel_coords])
+            print(bbox_coords)
+            img_boxes = draw_bounding_boxes_on_image(src_path, bbox_coords)
+            img_boxes.save(write_path, "PNG")
+            # with rasterio.open(
+            #         img_write_path, 'w',
+            #         driver='GTiff', width=src_ds.shape[1], height=src_ds.shape[0],
+            #         count=3, dtype='uint16') as dst:
+            #     dst.write(src_ds.read(1), indexes=1) #b
+            #     dst.write(src_ds.read(2), indexes=2) #g
+            #     dst.write(src_ds.read(3), indexes=3) #r
 
 
 def main():
@@ -226,6 +284,7 @@ def main():
     name = folder_path + 'TC_NG_Baghdad_IQ_Geo.tif'
     """
 
-    generate_chips()
+    draw_bboxes_on_scenes()
+    # generate_chips()
 
 main()
