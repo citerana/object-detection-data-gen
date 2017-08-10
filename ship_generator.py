@@ -12,10 +12,31 @@ from shapely import geometry
 from shapely.ops import transform
 import pyproj
 from functools import partial
+import matplotlib.pyplot as plt
 
 from draw_bboxes import draw_bounding_boxes_on_image
 from data_extent import data, folders
 
+
+def draw_bboxes_on_scenes():
+    _path = '/home/annie'
+
+    for img_ind, folder_name in enumerate(folders):
+        folder_path = join(dataset_path, folder_name) + '/'
+        img_name = data[img_ind][0]
+        img_corners = data[img_ind][1]
+        src_path = dataset_path + '/' + str(img_ind) + '.png'
+        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
+        img_write_path = '/home/annie/' + str(img_ind) + '.png'
+
+
+        with rasterio.open(src_path) as src_ds:
+            b, g, r, ir = (src_ds.read(k) for k in (1, 2, 3, 4))
+            pixel_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
+            bbox_coords = np.array([tf_ordered_coords(coords) for coords in pixel_coords])
+            img_boxes = draw_bounding_boxes_on_image(src_path, bbox_coords)
+            img_boxes.save(write_path, "PNG")
+            
 
 def get_image_corners(x):
     return [
@@ -99,17 +120,25 @@ def shapely_polygon_map_to_grid(rect):
     return [pts[3][0], pts[3][1], pts[4][0], pts[1][1]]
 
 
+def rasterio_index(rect, src):
+    ul = src.index(rect[0], rect[2])
+    lr = src.index(rect[1], rect[3])
+
+    minx = min(ul[0], lr[0])
+    maxx = max(ul[0], lr[0])
+    miny = min(ul[1], lr[1])
+    maxy = max(ul[1], lr[1])
+
+    return [minx, maxx, miny, maxy]
+
+
 def convert_to_pixels(src_ds, ogr_filename, img_corners):
     img_h, img_w = src_ds.shape[0], src_ds.shape[1]
     with open(ogr_filename) as ogr:
         ogr_dict = json.load(ogr)
 
-    # map attributes
-    # map_corners = get_image_corners(img_corners)
-    # map_w, map_h = coordinate_width_and_height(map_corners)
     # grid attributes
     grid_corners = get_image_corners(img_corners)
-    print(grid_corners)
     grid_w, grid_h = coordinate_width_and_height(grid_corners)
 
     # Uses scaling up to convert from coords to pixels
@@ -121,26 +150,26 @@ def convert_to_pixels(src_ds, ogr_filename, img_corners):
 
     # Uses a percentile location to convert across units
     coord_rectangles = [create_coordinate_rectangle(feat) for feat in ogr_dict['features'][::2]]
-    print(coord_rectangles[0])
-    grid_rectangles = [shapely_polygon_map_to_grid(rect) for rect in coord_rectangles]
-    print(grid_rectangles[0])
-    percentile_coords = [percentiles_from_rectangle(feat, grid_corners[1], grid_corners[3], grid_w, grid_h)
-                         for rect in grid_rectangles]
-    #print(grid_w, grid_h)
-    print(percentile_coords[0])
-    pixel_coords2 = [match_percent_to_pixel(coords, img_w, img_h) for coords in percentile_coords]
-    print(pixel_coords2[0])
+    pixel_coords3 = [rasterio_index(rect, src_ds) for rect in coord_rectangles]
+    # grid_rectangles = [shapely_polygon_map_to_grid(rect) for rect in coord_rectangles]
+    # print(grid_rectangles[0])
+    # percentile_coords = [percentiles_from_rectangle(feat, grid_corners[1], grid_corners[3], grid_w, grid_h)
+    #                      for rect in grid_rectangles]
+    # #print(grid_w, grid_h)
+    # print(percentile_coords[0])
+    # pixel_coords2 = [match_percent_to_pixel(coords, img_w, img_h) for coords in percentile_coords]
+    # print(pixel_coords2[0])
 
-    return pixel_coords2
+    return pixel_coords3
 
 
-def window_ordered_coords(rasterio_bbox):
+def window_ordered_coords(bbox):
     # ymin, ymax, xmin, xmax
-    return ((rasterio_bbox[3], rasterio_bbox[1]), (rasterio_bbox[0], rasterio_bbox[2]))
+    return ((bbox[0], bbox[2]), (bbox[1], bbox[3]))
 
 
 def bbox_ordered_coords(rect):
-    # xmin, ymin, xmax, ymax
+    # xmin, ymax, xmax, ymin
     return rect[0], rect[3], rect[1], rect[2]
 
 
@@ -156,19 +185,26 @@ def check_in_bbox(x, y, bbox):
 
 
 def contains(big, sml):
-    if big[0] <= sml[0] and big[1] >= sml[1] and big[2] >= sml[2] and \
-       big[3] <= sml[3]:
+    if big[0] <= sml[0] and big[1] <= sml[1] and big[2] >= sml[2] and \
+       big[3] >= sml[3]:
+       print("Got one!")
        return True
     return False
 
 
 def expand_window_with_offset(bbox):
-    while True:
-        ul_X = randrange(bbox[0], bbox[1] + 1)
-        ul_Y = randrange(bbox[2], bbox[3] + 1)
-        # Check if proposed upper left corner of window is in the bounding box
-        if not check_in_bbox(ul_X, ul_Y, bbox):
-            break
+    # box_w = abs(bbox[0] - bbox[1])
+    # box_h = abs(bbox[2] - bbox[3])
+    # center_x = (bbox[0] + bbox[1])/2
+    # center_y = (bbox[2] + bbox[3])/2
+    # valid_w = 512 - box_w
+    # valid_h = 512 - box_h
+
+    # ul_X = randrange(center_x - valid_w + 100, center_x + valid_w - 255)
+    # ul_Y = randrange(center_y - valid_h + 100, center_y + valid_h - 255)
+
+    ul_X = randrange(bbox[0] - 100, bbox[0] + 100)
+    ul_Y = randrange(bbox[2] - 100, bbox[2] + 100)
 
     return ul_X, ul_X + 256, ul_Y, ul_Y + 256
 
@@ -176,10 +212,10 @@ def expand_window_with_offset(bbox):
 def expand_window_no_offset(bbox):
     if bbox[0] - 128 < 0 or bbox[0] + 128 < 0 or bbox[1] - 128 < 0 or bbox[1] + 128 < 0:
         return 0, 256, 0, 256
-    return bbox[0] - 128, bbox[0] + 128, bbox[1] - 128, bbox[1] + 128
+    return [bbox[0] - 128, bbox[0] + 128, bbox[2] - 128, bbox[2] + 128]
 
 
-def create_valid_windows(chips, ship_boxes):
+def create_valid_windows(chips, ship_boxes, maxX, maxY):
     windows = []
     for chip in chips:
         valid_window = True
@@ -206,7 +242,8 @@ def generate_chips():
         img_name = data[img_ind][0]
         img_corners = data[img_ind][1]
         csv_name = 'ships_' + str(img_ind) + '.csv'
-        src_path = folder_path + img_name
+        # src_path = folder_path + img_name                      # direct data
+        src_path = folder_path + 'test_' + str(img_ind) + '.tif' # warped data
         ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
 
         with rasterio.open(src_path) as src_ds:
@@ -217,14 +254,29 @@ def generate_chips():
                           for bbox in bbox_coords]
             #chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
             chip_coords = [expand_window_no_offset(bbox) for bbox in bbox_coords]
-
-            windows = create_valid_windows(chip_coords, ship_boxes)
+            windows = create_valid_windows(chip_coords, ship_boxes, src_ds.shape[0], src_ds.shape[1])
+            print(len(chip_coords), len(windows))
             masks = [window_ordered_coords(window) for window in windows]
+
+            full_windows = []
+            for r in chip_coords:
+                full_windows.append([r[0], r[1], r[2], r[3]])
+                full_windows.append([r[0], r[1], r[3], r[2]])
+            # visualize(bbox_coords, chip_coords, src_ds)
+            conv_windows = []
+            for r in windows:
+                conv_windows.append([r[0], r[2], r[3], r[1]])
+                conv_windows.append([r[0], r[2], r[1], r[3]])
+            visualize(bbox_coords, full_windows, conv_windows, src_ds)
+            raw_input("stop")
 
             for mask, window_box in zip(masks, windows):
                 for ship in ship_boxes:
                     if not rasterio.coords.disjoint_bounds(window_box, ship):
-                        chip_ships_list.append((str(chip_ind), ship[0], ship[1], ship[2], ship[3]))
+                        print(ship, window_box)
+                        chip_ships_list.append((str(chip_ind), ship[0] - window_box[0],
+                            ship[1] - window_box[1], ship[2] - window_box[0], ship[3] - window_box[1]))
+                print(chip_ships_list)
                 img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
                 with rasterio.open(
                         img_write_path, 'w',
@@ -241,7 +293,7 @@ def generate_chips():
                     # dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
                     # dst.close()
                 chip_ind += 1
-                # print(str(chip_ind) + " chip written")
+                print(str(chip_ind) + " chip written")
         raw_input("Continue? ")
     # Once all chips have been created, write ship loc dataframe to csv
     print(chip_ships_list)
@@ -251,32 +303,36 @@ def generate_chips():
     df.to_csv(csv_write_path, index=False)
 
 
-def draw_bboxes_on_scenes():
-    _path = '/home/annie'
-
-    for img_ind, folder_name in enumerate(folders):
-        folder_path = join(dataset_path, folder_name) + '/'
-        img_name = data[img_ind][0]
-        img_corners = data[img_ind][1]
-        src_path = dataset_path + '/' + str(img_ind) + '.png'
-        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
-        img_write_path = '/home/annie/' + str(img_ind) + '.png'
-
-
-        with rasterio.open(src_path) as src_ds:
-            b, g, r, ir = (src_ds.read(k) for k in (1, 2, 3, 4))
-            pixel_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
-            bbox_coords = np.array([tf_ordered_coords(coords) for coords in pixel_coords])
-            print(bbox_coords)
-            img_boxes = draw_bounding_boxes_on_image(src_path, bbox_coords)
-            img_boxes.save(write_path, "PNG")
-            # with rasterio.open(
-            #         img_write_path, 'w',
-            #         driver='GTiff', width=src_ds.shape[1], height=src_ds.shape[0],
-            #         count=3, dtype='uint16') as dst:
-            #     dst.write(src_ds.read(1), indexes=1) #b
-            #     dst.write(src_ds.read(2), indexes=2) #g
-            #     dst.write(src_ds.read(3), indexes=3) #r
+def visualize(bbox_coords, full, valid, src_ds):
+    # Visualizations!
+    x, y, x1, y1, x2, y2 = [], [], [], [], [], []
+    for bbox in bbox_coords:
+            x.append(bbox[2])
+            #x.append(bbox[3])
+            y.append(bbox[0])
+            #y.append(bbox[1])
+    for window in valid:
+        x1.append(window[0])
+        x1.append(window[2])
+        y1.append(window[1])
+        y1.append(window[3])
+    for window in full:
+        x2.append(window[2])
+        x2.append(window[3])
+        y2.append(window[0])
+        y2.append(window[1])
+    image = src_ds.read()
+    image = np.transpose(image, [1, 2, 0])
+    # plot a bbox
+    plt.plot([1,2,3,4])
+    plt.ylabel('some numbers')
+    # plt.figure(figsize=(10, 10))
+    plt.imshow(image, origin='upper')
+    plt.scatter(x,y, color='red')
+    plt.scatter(x1,y1, color='blue')
+    plt.scatter(x2,y2, color='green')
+    plt.show()
+    raw_input("here")
 
 
 def main():
