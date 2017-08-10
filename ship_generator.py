@@ -1,6 +1,6 @@
 # flake8: noqa
 from os.path import join
-from random import randrange
+from random import randrange, choice
 import csv
 
 import numpy as np
@@ -36,7 +36,7 @@ def draw_bboxes_on_scenes():
             bbox_coords = np.array([tf_ordered_coords(coords) for coords in pixel_coords])
             img_boxes = draw_bounding_boxes_on_image(src_path, bbox_coords)
             img_boxes.save(write_path, "PNG")
-            
+
 
 def get_image_corners(x):
     return [
@@ -137,30 +137,10 @@ def convert_to_pixels(src_ds, ogr_filename, img_corners):
     with open(ogr_filename) as ogr:
         ogr_dict = json.load(ogr)
 
-    # grid attributes
-    grid_corners = get_image_corners(img_corners)
-    grid_w, grid_h = coordinate_width_and_height(grid_corners)
-
-    # Uses scaling up to convert from coords to pixels
-    height_scale, width_scale = img_h/grid_h, img_w/grid_w
-    zeroed_coords = [points_from_rectangle(feat, grid_corners[1], grid_corners[2])
-                    for feat in ogr_dict['features'][::2]]
-    pixel_coords = [scale_to_pixel(coords, height_scale, width_scale)
-                    for coords in zeroed_coords]
-
-    # Uses a percentile location to convert across units
     coord_rectangles = [create_coordinate_rectangle(feat) for feat in ogr_dict['features'][::2]]
-    pixel_coords3 = [rasterio_index(rect, src_ds) for rect in coord_rectangles]
-    # grid_rectangles = [shapely_polygon_map_to_grid(rect) for rect in coord_rectangles]
-    # print(grid_rectangles[0])
-    # percentile_coords = [percentiles_from_rectangle(feat, grid_corners[1], grid_corners[3], grid_w, grid_h)
-    #                      for rect in grid_rectangles]
-    # #print(grid_w, grid_h)
-    # print(percentile_coords[0])
-    # pixel_coords2 = [match_percent_to_pixel(coords, img_w, img_h) for coords in percentile_coords]
-    # print(pixel_coords2[0])
+    pixel_coords = [rasterio_index(rect, src_ds) for rect in coord_rectangles]
 
-    return pixel_coords3
+    return pixel_coords
 
 
 def window_ordered_coords(bbox):
@@ -170,7 +150,7 @@ def window_ordered_coords(bbox):
 
 def bbox_ordered_coords(rect):
     # xmin, ymax, xmax, ymin
-    return rect[0], rect[3], rect[1], rect[2]
+    return rect[0], rect[2], rect[1], rect[3]
 
 
 def tf_ordered_coords(rect):
@@ -187,7 +167,6 @@ def check_in_bbox(x, y, bbox):
 def contains(big, sml):
     if big[0] <= sml[0] and big[1] <= sml[1] and big[2] >= sml[2] and \
        big[3] >= sml[3]:
-       print("Got one!")
        return True
     return False
 
@@ -206,7 +185,7 @@ def expand_window_with_offset(bbox):
     ul_X = randrange(bbox[0] - 100, bbox[0] + 100)
     ul_Y = randrange(bbox[2] - 100, bbox[2] + 100)
 
-    return ul_X, ul_X + 256, ul_Y, ul_Y + 256
+    return ul_X - 128, ul_X + 128, ul_Y - 128, ul_Y + 128
 
 
 def expand_window_no_offset(bbox):
@@ -215,21 +194,29 @@ def expand_window_no_offset(bbox):
     return [bbox[0] - 128, bbox[0] + 128, bbox[2] - 128, bbox[2] + 128]
 
 
-def create_valid_windows(chips, ship_boxes, maxX, maxY):
-    windows = []
-    for chip in chips:
+def create_valid(chip_boxes, ship_boxes, maxX, maxY):
+    windows, ships = [], []
+    for chip in chip_boxes:
+        ships_in_chip = []
         valid_window = True
-        window_box = rasterio.coords.BoundingBox(*bbox_ordered_coords(chip))
+        if chip[0] < 0 or chip[1] < 0 or chip[2] > maxX or chip[3] > maxY:
+            valid_window = False
         for ship in ship_boxes:
             # Check if ship overlaps with the window and if it does
             # check that the ship is completely in the window.
-            if not rasterio.coords.disjoint_bounds(window_box, ship):
-                if not contains(window_box, ship):
+            if not rasterio.coords.disjoint_bounds(chip, ship):
+                if not contains(chip, ship):
                     valid_window = False
+                else:
+                    # Convert ship pixel location to location inside chip
+                    relative_ship = [ship[0] - chip[0], ship[1] - chip[1],
+                                     ship[2] - chip[0], ship[3] - chip[1]]
+                    ships_in_chip.append(relative_ship)
         if valid_window:
-            windows.append(window_box)
+            windows.append(chip)
+            ships.append(ships_in_chip)
 
-    return windows
+    return windows, ships
 
 
 def generate_chips():
@@ -247,36 +234,22 @@ def generate_chips():
         ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
 
         with rasterio.open(src_path) as src_ds:
-            b, g, r, ir = (src_ds.read(k) for k in (1, 2, 3, 4))
-
             bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
             ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(bbox))
                           for bbox in bbox_coords]
-            #chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
-            chip_coords = [expand_window_no_offset(bbox) for bbox in bbox_coords]
-            windows = create_valid_windows(chip_coords, ship_boxes, src_ds.shape[0], src_ds.shape[1])
-            print(len(chip_coords), len(windows))
+            chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
+            chip_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(chip))
+                          for chip in chip_coords]
+            box_up = [expand_window_no_offset(bbox) for bbox in bbox_coords]
+            windows, all_ships = create_valid(chip_boxes, ship_boxes, src_ds.shape[0], src_ds.shape[1])
+
             masks = [window_ordered_coords(window) for window in windows]
 
-            full_windows = []
-            for r in chip_coords:
-                full_windows.append([r[0], r[1], r[2], r[3]])
-                full_windows.append([r[0], r[1], r[3], r[2]])
-            # visualize(bbox_coords, chip_coords, src_ds)
-            conv_windows = []
-            for r in windows:
-                conv_windows.append([r[0], r[2], r[3], r[1]])
-                conv_windows.append([r[0], r[2], r[1], r[3]])
-            visualize(bbox_coords, full_windows, conv_windows, src_ds)
-            raw_input("stop")
+            # visualize(bbox_coords, box_up, windows, src_ds)
 
-            for mask, window_box in zip(masks, windows):
-                for ship in ship_boxes:
-                    if not rasterio.coords.disjoint_bounds(window_box, ship):
-                        print(ship, window_box)
-                        chip_ships_list.append((str(chip_ind), ship[0] - window_box[0],
-                            ship[1] - window_box[1], ship[2] - window_box[0], ship[3] - window_box[1]))
-                print(chip_ships_list)
+            for mask, ships_in_mask in zip(masks, all_ships):
+                for ship in ships_in_mask:
+                    chip_ships_list.append((str(chip_ind), ship))
                 img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
                 with rasterio.open(
                         img_write_path, 'w',
@@ -294,28 +267,35 @@ def generate_chips():
                     # dst.close()
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
-        raw_input("Continue? ")
+        #raw_input("Continue? ")
     # Once all chips have been created, write ship loc dataframe to csv
-    print(chip_ships_list)
     csv_labels = ['image', 'ship (l, t, r, b)']
     df = pd.DataFrame.from_records(chip_ships_list, columns=csv_labels)
     csv_write_path = dataset_path + '/train/' + 'ship_locations.csv'
     df.to_csv(csv_write_path, index=False)
 
 
-def visualize(bbox_coords, full, valid, src_ds):
-    # Visualizations!
+def visualize(bbox_coords, full1, valid1, src_ds):
     x, y, x1, y1, x2, y2 = [], [], [], [], [], []
+    full = []
+    for r in full1:
+        full.append([r[0], r[1], r[2], r[3]])
+        full.append([r[0], r[1], r[3], r[2]])
+    valid = []
+    for r in valid1:
+        valid.append([r[0], r[2], r[3], r[1]])
+        valid.append([r[0], r[2], r[1], r[3]])
+    # Visualizations!
     for bbox in bbox_coords:
             x.append(bbox[2])
             #x.append(bbox[3])
             y.append(bbox[0])
             #y.append(bbox[1])
     for window in valid:
-        x1.append(window[0])
         x1.append(window[2])
+        x1.append(window[3])
+        y1.append(window[0])
         y1.append(window[1])
-        y1.append(window[3])
     for window in full:
         x2.append(window[2])
         x2.append(window[3])
@@ -332,7 +312,6 @@ def visualize(bbox_coords, full, valid, src_ds):
     plt.scatter(x1,y1, color='blue')
     plt.scatter(x2,y2, color='green')
     plt.show()
-    raw_input("here")
 
 
 def main():
