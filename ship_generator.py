@@ -1,13 +1,12 @@
 # flake8: noqa
 from os.path import join
-from random import randrange, choice
+from random import randrange
 import csv
 
 import numpy as np
 import pandas as pd
 import rasterio
 import json
-import gdal
 from shapely import geometry
 from shapely.ops import transform
 import pyproj
@@ -219,7 +218,7 @@ def create_valid(chip_boxes, ship_boxes, maxX, maxY):
     return windows, ships
 
 
-def generate_chips():
+def generate_chips(data_type, viz):
     dataset_path = '/home/annie/Data/datasets/planet_ships/singapore'
     chip_ships_list = []
     chip_ind = 0
@@ -234,6 +233,10 @@ def generate_chips():
         ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
 
         with rasterio.open(src_path) as src_ds:
+            flag = raw_input("Generate using " + img_name + "? ('q' to stop) ")
+            if flag == 'q':
+                break
+
             bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
             ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(bbox))
                           for bbox in bbox_coords]
@@ -245,29 +248,35 @@ def generate_chips():
 
             masks = [window_ordered_coords(window) for window in windows]
 
-            # visualize(bbox_coords, box_up, windows, src_ds)
+            if viz:
+                visualize(bbox_coords, box_up, windows, src_ds)
 
             for mask, ships_in_mask in zip(masks, all_ships):
                 for ship in ships_in_mask:
                     chip_ships_list.append((str(chip_ind), ship))
-                img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
-                with rasterio.open(
-                        img_write_path, 'w',
-                        driver='GTiff', width=256, height=256, count=3,
-                        dtype='uint16') as dst:
-                    dst.write(src_ds.read(1, window=mask), indexes=1) #b
-                    dst.write(src_ds.read(2, window=mask), indexes=2) #g
-                    dst.write(src_ds.read(3, window=mask), indexes=3) #r
-                    #     img_write_path, 'w',
-                    #     driver='png', width=256, height=256, count=3,
-                    #     dtype='uint8') as dst:
-                    # dst.write(src_ds.read(3, window=mask).astype(np.uint8), indexes=1) #b
-                    # dst.write(src_ds.read(2, window=mask).astype(np.uint8), indexes=2) #g
-                    # dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
-                    # dst.close()
+                if data_type == 'tif':
+                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
+                    with rasterio.open(
+                            img_write_path, 'w',
+                            driver='GTiff', width=256, height=256, count=3,
+                            dtype='uint16') as dst:
+                        dst.write(src_ds.read(1, window=mask), indexes=1) #b
+                        dst.write(src_ds.read(2, window=mask), indexes=2) #g
+                        dst.write(src_ds.read(3, window=mask), indexes=3) #r
+                else:
+                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.png'
+                    with rasterio.open(
+                            img_write_path, 'w',
+                            driver='png', width=256, height=256, count=3,
+                            dtype='uint8') as dst:
+                        dst.write(src_ds.read(3, window=mask).astype(np.uint8), indexes=1) #b
+                        dst.write(src_ds.read(2, window=mask).astype(np.uint8), indexes=2) #g
+                        dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
+                        dst.close()
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
-        #raw_input("Continue? ")
+            if flag == 'q':
+                break
     # Once all chips have been created, write ship loc dataframe to csv
     csv_labels = ['image', 'ship (l, t, r, b)']
     df = pd.DataFrame.from_records(chip_ships_list, columns=csv_labels)
@@ -285,7 +294,6 @@ def visualize(bbox_coords, full1, valid1, src_ds):
     for r in valid1:
         valid.append([r[0], r[2], r[3], r[1]])
         valid.append([r[0], r[2], r[1], r[3]])
-    # Visualizations!
     for bbox in bbox_coords:
             x.append(bbox[2])
             #x.append(bbox[3])
@@ -301,12 +309,10 @@ def visualize(bbox_coords, full1, valid1, src_ds):
         x2.append(window[3])
         y2.append(window[0])
         y2.append(window[1])
+
     image = src_ds.read()
     image = np.transpose(image, [1, 2, 0])
-    # plot a bbox
-    plt.plot([1,2,3,4])
-    plt.ylabel('some numbers')
-    # plt.figure(figsize=(10, 10))
+
     plt.imshow(image, origin='upper')
     plt.scatter(x,y, color='red')
     plt.scatter(x1,y1, color='blue')
@@ -315,31 +321,20 @@ def visualize(bbox_coords, full1, valid1, src_ds):
 
 
 def main():
-    """
-    for each scene
-        load .csv of bounding boxes into pandas
-        for each row in the bounding boxes of an image,
-            pick a window with some random offset
-                check if the edges intersect with another boxes
-                    if so, discard this box
-                otherwise, convert the BB geo-location wrt .png chip pixels
-                check if the image has gone off the edge of the scene
-                    if so, convert blank areas into neutral color
-                    map all known ships in chip to a CSV
-        df_path = join(folder_path, csv_name)
-        bbdf = pd.read_csv(df_path, skipinitialspace=True, usecols=csv_fields)
-        # we're only interested in every other line of the csv
-        for bb in bbdf.values[::2]:
-            with rasterio.open("tests/data/RGB.byte.tif") as src:
-                mask = rasterio.features.rasterize(ogr_name, src.shape)
+    data = {'png':'.png', 'tif':'.tif'}
+    viz = False
 
-    folder_path = '/home/annie/Data/datasets/planet_ships/singapore/20170622_095940_0c42/'
-    ogr_name = folder_path + 'ships_ogr_5.geojson'
-    src_name = folder_path + '20170622_095940_0c42_3B_AnalyticMS.tif'
-    name = folder_path + 'TC_NG_Baghdad_IQ_Geo.tif'
-    """
+    data_type = raw_input("Choose 'tif' or 'png' as your filetype: ")
+    visualize = raw_input("Enter 'yes' if you'd like to see the windows prior to creation: ")
 
-    # draw_bboxes_on_scenes()
-    generate_chips()
+    if data_type in data:
+        if visualize == 'yes':
+            viz = True
+            print("""\nNote: In the visualization window, red marks ships, green marks windows centered
+on ships prior to being offset and blue marks offset and valid windows that will
+be used to generate chips from the provided image.\n""")
+        generate_chips(data_type, viz)
+    else:
+        "That's not a valid data type!"
 
 main()
