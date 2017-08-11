@@ -1,4 +1,3 @@
-# flake8: noqa
 from os.path import join
 from random import randrange
 import csv
@@ -16,21 +15,19 @@ import matplotlib.pyplot as plt
 from data_extent import data, folders
 
 
-def visualize(bbox_coords, full1, valid1, src_ds):
+def visualize(bbox_coords, windows, culled_windows, src_ds):
     x, y, x1, y1, x2, y2 = [], [], [], [], [], []
     full = []
-    for r in full1:
+    for r in windows:
         full.append([r[0], r[1], r[2], r[3]])
         full.append([r[0], r[1], r[3], r[2]])
     valid = []
-    for r in valid1:
+    for r in culled_windows:
         valid.append([r[0], r[2], r[3], r[1]])
         valid.append([r[0], r[2], r[1], r[3]])
     for bbox in bbox_coords:
             x.append(bbox[2])
-            #x.append(bbox[3])
             y.append(bbox[0])
-            #y.append(bbox[1])
     for window in valid:
         x1.append(window[2])
         x1.append(window[3])
@@ -46,17 +43,17 @@ def visualize(bbox_coords, full1, valid1, src_ds):
     image = np.transpose(image, [1, 2, 0])
 
     plt.imshow(image, origin='upper')
-    plt.scatter(x,y, color='red')
-    plt.scatter(x1,y1, color='blue')
-    plt.scatter(x2,y2, color='green')
+    plt.scatter(x, y, color='red')
+    plt.scatter(x1, y1, color='blue')
+    plt.scatter(x2, y2, color='green')
     plt.show()
 
 
 def get_image_corners(x):
     return [
-        x[0][0], #minX
+        x[0][0],  # minX
         x[2][0],
-        x[1][1], #minY
+        x[1][1],  # minY
         x[0][1]
     ]
 
@@ -68,10 +65,10 @@ def coordinate_width_and_height(corners):
 def points_from_rectangle(rectangle, maxXcoord, minYcoord):
     rectangle_js = rectangle['geometry']['coordinates'][0]
     return [
-        min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]), # minX/left
-        max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]), # maxX/right
-        min(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord), # minY/bottom
-        max(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord) # maxY/top
+        min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]),
+        max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0]),
+        min(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord),
+        max(rectangle_js[0][1] - minYcoord, rectangle_js[2][1] - minYcoord)
     ]
 
 
@@ -88,10 +85,10 @@ def scale_to_pixel(rect, height_scale, width_scale):
 def percentiles_from_rectangle(rectangle, maxXcoord, maxYcoord, w, h):
     rectangle_js = rectangle['geometry']['coordinates'][0]
     return [
-        min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w, # minX/left
-        max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w, # maxX/right
-        min(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h, # minY/bottom
-        max(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h, # maxY/top
+        min(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w,
+        max(maxXcoord - rectangle_js[0][0], maxXcoord - rectangle_js[1][0])/w,
+        min(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h,
+        max(maxYcoord - rectangle_js[0][1], maxYcoord - rectangle_js[2][1])/h
     ]
 
 
@@ -108,10 +105,10 @@ def match_percent_to_pixel(rect, img_w, img_h):
 def create_coordinate_rectangle(rectangle):
     rectangle_js = rectangle['geometry']['coordinates'][0]
     return [
-        min(rectangle_js[0][0], rectangle_js[1][0]), # minX/left
-        max(rectangle_js[0][0], rectangle_js[1][0]), # maxX/right
-        min(rectangle_js[0][1], rectangle_js[2][1]), # minY/bottom
-        max(rectangle_js[0][1], rectangle_js[2][1]) # maxY/top
+        min(rectangle_js[0][0], rectangle_js[1][0]),  # minX/left
+        max(rectangle_js[0][0], rectangle_js[1][0]),  # maxX/right
+        min(rectangle_js[0][1], rectangle_js[2][1]),  # minY/bottom
+        max(rectangle_js[0][1], rectangle_js[2][1])   # maxY/top
     ]
 
 
@@ -129,7 +126,7 @@ def shapely_polygon_map_to_grid(rect):
     new_shape = transform(project, shape)
     # Note that a box [1,2,3,4] is altered and then dumped as
     # [(3.0, 2.0), (3.0, 4.0), (1.0, 4.0), (1.0, 2.0), (3.0, 2.0)]
-    pts = geometry.base.dump_coords(shape)
+    pts = geometry.base.dump_coords(new_shape)
 
     return [pts[3][0], pts[3][1], pts[4][0], pts[1][1]]
 
@@ -147,11 +144,11 @@ def rasterio_index(rect, src):
 
 
 def convert_to_pixels(src_ds, ogr_filename, img_corners):
-    img_h, img_w = src_ds.shape[0], src_ds.shape[1]
     with open(ogr_filename) as ogr:
         ogr_dict = json.load(ogr)
 
-    coord_rectangles = [create_coordinate_rectangle(feat) for feat in ogr_dict['features'][::2]]
+    coord_rectangles = [create_coordinate_rectangle(feat)
+                        for feat in ogr_dict['features'][::2]]
     pixel_coords = [rasterio_index(rect, src_ds) for rect in coord_rectangles]
 
     return pixel_coords
@@ -176,7 +173,7 @@ def check_in_bbox(x, y, bbox):
 def contains(big, sml):
     if big[0] <= sml[0] and big[1] <= sml[1] and big[2] >= sml[2] and \
        big[3] >= sml[3]:
-       return True
+        return True
     return False
 
 
@@ -202,7 +199,8 @@ def expand_window_with_offset(bbox):
 
 
 def expand_window_no_offset(bbox):
-    if bbox[0] - 128 < 0 or bbox[0] + 128 < 0 or bbox[1] - 128 < 0 or bbox[1] + 128 < 0:
+    if bbox[0] - 128 < 0 or bbox[0] + 128 < 0 or bbox[1] - 128 < 0 or \
+       bbox[1] + 128 < 0:
         return 0, 256, 0, 256
     return [bbox[0] - 128, bbox[0] + 128, bbox[2] - 128, bbox[2] + 128]
 
@@ -242,9 +240,8 @@ def generate_chips(data_type, viz):
         folder_path = join(dataset_path, folder_name) + '/'
         img_name = data[img_ind][0]
         img_corners = data[img_ind][1]
-        csv_name = 'ships_' + str(img_ind) + '.csv'
-        # src_path = folder_path + img_name                      # direct data
-        src_path = folder_path + 'test_' + str(img_ind) + '.tif' # warped data
+        # src_path = folder_path + img_name                       # direct data
+        src_path = folder_path + 'test_' + str(img_ind) + '.tif'  # warped data
         ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
 
         with rasterio.open(src_path) as src_ds:
@@ -253,13 +250,15 @@ def generate_chips(data_type, viz):
                 break
 
             bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
-            ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(bbox))
-                          for bbox in bbox_coords]
-            chip_coords = [expand_window_with_offset(bbox) for bbox in bbox_coords]
-            chip_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(chip))
-                          for chip in chip_coords]
+            ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(
+                          bbox)) for bbox in bbox_coords]
+            chip_coords = [expand_window_with_offset(bbox)
+                           for bbox in bbox_coords]
+            chip_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(
+                          chip)) for chip in chip_coords]
             box_up = [expand_window_no_offset(bbox) for bbox in bbox_coords]
-            windows, all_ships = create_valid(chip_boxes, ship_boxes, src_ds.shape[0], src_ds.shape[1])
+            windows, all_ships = create_valid(chip_boxes, ship_boxes,
+                                              src_ds.shape[0], src_ds.shape[1])
 
             masks = [window_ordered_coords(window) for window in windows]
 
@@ -267,17 +266,18 @@ def generate_chips(data_type, viz):
                 visualize(bbox_coords, box_up, windows, src_ds)
 
             for mask, ships_in_mask in zip(masks, all_ships):
+                chip = str(chip_ind)
                 if data_type == 'tif':
-                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
+                    img_write_path = dataset_path + '/train/' + chip + '.tif'
                     with rasterio.open(
                             img_write_path, 'w',
                             driver='GTiff', width=256, height=256, count=3,
                             dtype='uint16') as dst:
-                        dst.write(src_ds.read(1, window=mask), indexes=1) #b
-                        dst.write(src_ds.read(2, window=mask), indexes=2) #g
-                        dst.write(src_ds.read(3, window=mask), indexes=3) #r
+                        dst.write(src_ds.read(1, window=mask), indexes=1)  # r
+                        dst.write(src_ds.read(2, window=mask), indexes=2)  # g
+                        dst.write(src_ds.read(3, window=mask), indexes=3)  # b
                 else:
-                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.jpg'
+                    img_write_path = dataset_path + '/train/' + chip + '.jpg'
                     with rasterio.open(
                             img_write_path, 'w',
                             driver='JPEG', width=256, height=256, count=3,
@@ -286,7 +286,8 @@ def generate_chips(data_type, viz):
                         rescaleIMG = np.reshape(mask_img, (-1, 1))
                         scaler = MinMaxScaler(feature_range=(0, 255))
                         rescaleIMG = scaler.fit_transform(rescaleIMG)
-                        mask_img_scaled = (np.reshape(rescaleIMG, mask_img.shape)).astype(np.uint8)
+                        mask_img_scaled = (np.reshape(rescaleIMG,
+                                           mask_img.shape)).astype(np.uint8)
                         dst.write(mask_img_scaled)
                         dst.close()
                 for ship in ships_in_mask:
@@ -305,20 +306,23 @@ def generate_chips(data_type, viz):
 
 
 def main():
-    data = {'jpg':'.jpg', 'tif':'.tif'}
+    data = {'jpg': '.jpg', 'tif': '.tif'}
     viz = False
 
     data_type = raw_input("Choose 'tif' or 'jpg' as your filetype: ")
-    visualize = raw_input("Enter 'yes' if you'd like to see the windows prior to creation: ")
+    visualize = raw_input("Enter 'yes' if you'd like to see the windows prior \
+to creation: ")
 
     if data_type in data:
         if visualize == 'yes':
             viz = True
-            print("""\nNote: In the visualization window, red marks ships, green marks windows centered
-on ships prior to being offset and blue marks offset and valid windows that will
-be used to generate chips from the provided image.\n""")
+            print("""\nNote: In the visualization window, red marks ships, \
+green marks windows centered
+on ships prior to being offset and blue marks all valid offset windows that
+will be used to generate chips from the provided image.\n""")
         generate_chips(data_type, viz)
     else:
         "That's not a valid data type!"
+
 
 main()
