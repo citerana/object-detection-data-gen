@@ -219,6 +219,7 @@ def create_valid(chip_boxes, ship_boxes, maxX, maxY):
 
 
 def generate_chips(data_type, viz):
+    from sklearn.preprocessing import MinMaxScaler
     dataset_path = '/home/annie/Data/datasets/planet_ships/singapore'
     chip_ships_list = []
     chip_ind = 0
@@ -252,8 +253,6 @@ def generate_chips(data_type, viz):
                 visualize(bbox_coords, box_up, windows, src_ds)
 
             for mask, ships_in_mask in zip(masks, all_ships):
-                for ship in ships_in_mask:
-                    chip_ships_list.append((str(chip_ind), ship))
                 if data_type == 'tif':
                     img_write_path = dataset_path + '/train/' + str(chip_ind) + '.tif'
                     with rasterio.open(
@@ -264,21 +263,28 @@ def generate_chips(data_type, viz):
                         dst.write(src_ds.read(2, window=mask), indexes=2) #g
                         dst.write(src_ds.read(3, window=mask), indexes=3) #r
                 else:
-                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.png'
+                    img_write_path = dataset_path + '/train/' + str(chip_ind) + '.jpg'
                     with rasterio.open(
                             img_write_path, 'w',
-                            driver='png', width=256, height=256, count=3,
+                            driver='JPEG', width=256, height=256, count=3,
                             dtype='uint8') as dst:
-                        dst.write(src_ds.read(3, window=mask).astype(np.uint8), indexes=1) #b
-                        dst.write(src_ds.read(2, window=mask).astype(np.uint8), indexes=2) #g
-                        dst.write(src_ds.read(1, window=mask).astype(np.uint8), indexes=3) #r
+                        mask_img = src_ds.read([3, 2, 1], window=mask)
+                        rescaleIMG = np.reshape(mask_img, (-1, 1))
+                        scaler = MinMaxScaler(feature_range=(0, 255))
+                        rescaleIMG = scaler.fit_transform(rescaleIMG)
+                        mask_img_scaled = (np.reshape(rescaleIMG, mask_img.shape)).astype(np.uint8)
+                        dst.write(mask_img_scaled)
                         dst.close()
+                for ship in ships_in_mask:
+                    chip_ships_list.append((str(chip_ind) + '.' + data_type,
+                                            ship[0], ship[2], ship[1], ship[3],
+                                            'ship'))
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
             if flag == 'q':
                 break
     # Once all chips have been created, write ship loc dataframe to csv
-    csv_labels = ['image', 'ship (l, t, r, b)']
+    csv_labels = ['filename', 'xmin', 'xmax', 'ymin', 'ymax', 'class_name']
     df = pd.DataFrame.from_records(chip_ships_list, columns=csv_labels)
     csv_write_path = dataset_path + '/train/' + 'ship_locations.csv'
     df.to_csv(csv_write_path, index=False)
@@ -321,10 +327,10 @@ def visualize(bbox_coords, full1, valid1, src_ds):
 
 
 def main():
-    data = {'png':'.png', 'tif':'.tif'}
+    data = {'jpg':'.jpg', 'tif':'.tif'}
     viz = False
 
-    data_type = raw_input("Choose 'tif' or 'png' as your filetype: ")
+    data_type = raw_input("Choose 'tif' or 'jpg' as your filetype: ")
     visualize = raw_input("Enter 'yes' if you'd like to see the windows prior to creation: ")
 
     if data_type in data:
