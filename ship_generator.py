@@ -13,28 +13,43 @@ import pyproj
 from functools import partial
 import matplotlib.pyplot as plt
 
-from draw_bboxes import draw_bounding_boxes_on_image
 from data_extent import data, folders
 
 
-def draw_bboxes_on_scenes():
-    _path = '/home/annie'
+def visualize(bbox_coords, full1, valid1, src_ds):
+    x, y, x1, y1, x2, y2 = [], [], [], [], [], []
+    full = []
+    for r in full1:
+        full.append([r[0], r[1], r[2], r[3]])
+        full.append([r[0], r[1], r[3], r[2]])
+    valid = []
+    for r in valid1:
+        valid.append([r[0], r[2], r[3], r[1]])
+        valid.append([r[0], r[2], r[1], r[3]])
+    for bbox in bbox_coords:
+            x.append(bbox[2])
+            #x.append(bbox[3])
+            y.append(bbox[0])
+            #y.append(bbox[1])
+    for window in valid:
+        x1.append(window[2])
+        x1.append(window[3])
+        y1.append(window[0])
+        y1.append(window[1])
+    for window in full:
+        x2.append(window[2])
+        x2.append(window[3])
+        y2.append(window[0])
+        y2.append(window[1])
 
-    for img_ind, folder_name in enumerate(folders):
-        folder_path = join(dataset_path, folder_name) + '/'
-        img_name = data[img_ind][0]
-        img_corners = data[img_ind][1]
-        src_path = dataset_path + '/' + str(img_ind) + '.png'
-        ogr_path = folder_path + 'ships_ogr_' + str(img_ind) + '.geojson'
-        img_write_path = '/home/annie/' + str(img_ind) + '.png'
+    image = src_ds.read()
+    image = np.transpose(image, [1, 2, 0])
 
-
-        with rasterio.open(src_path) as src_ds:
-            b, g, r, ir = (src_ds.read(k) for k in (1, 2, 3, 4))
-            pixel_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
-            bbox_coords = np.array([tf_ordered_coords(coords) for coords in pixel_coords])
-            img_boxes = draw_bounding_boxes_on_image(src_path, bbox_coords)
-            img_boxes.save(write_path, "PNG")
+    plt.imshow(image, origin='upper')
+    plt.scatter(x,y, color='red')
+    plt.scatter(x1,y1, color='blue')
+    plt.scatter(x2,y2, color='green')
+    plt.show()
 
 
 def get_image_corners(x):
@@ -152,11 +167,6 @@ def bbox_ordered_coords(rect):
     return rect[0], rect[2], rect[1], rect[3]
 
 
-def tf_ordered_coords(rect):
-    # ymin, xmin, ymax, xmax
-    return [rect[2], rect[0], rect[3], rect[1]]
-
-
 def check_in_bbox(x, y, bbox):
     if (x > bbox[0] and x <= bbox[1]) and (y > bbox[2] and y <= bbox[3]):
         return True
@@ -171,15 +181,19 @@ def contains(big, sml):
 
 
 def expand_window_with_offset(bbox):
-    # box_w = abs(bbox[0] - bbox[1])
-    # box_h = abs(bbox[2] - bbox[3])
-    # center_x = (bbox[0] + bbox[1])/2
-    # center_y = (bbox[2] + bbox[3])/2
-    # valid_w = 512 - box_w
-    # valid_h = 512 - box_h
+    """
+    This commented out portion is another method of generating offset,
+    with the new window location covering a larger area
+    box_w = abs(bbox[0] - bbox[1])
+    box_h = abs(bbox[2] - bbox[3])
+    center_x = (bbox[0] + bbox[1])/2
+    center_y = (bbox[2] + bbox[3])/2
+    valid_w = 512 - box_w
+    valid_h = 512 - box_h
 
-    # ul_X = randrange(center_x - valid_w + 100, center_x + valid_w - 255)
-    # ul_Y = randrange(center_y - valid_h + 100, center_y + valid_h - 255)
+    ul_X = randrange(center_x - valid_w + 100, center_x + valid_w - 255)
+    ul_Y = randrange(center_y - valid_h + 100, center_y + valid_h - 255)
+    """
 
     ul_X = randrange(bbox[0] - 100, bbox[0] + 100)
     ul_Y = randrange(bbox[2] - 100, bbox[2] + 100)
@@ -208,8 +222,8 @@ def create_valid(chip_boxes, ship_boxes, maxX, maxY):
                     valid_window = False
                 else:
                     # Convert ship pixel location to location inside chip
-                    relative_ship = [ship[0] - chip[0], ship[1] - chip[1],
-                                     ship[2] - chip[0], ship[3] - chip[1]]
+                    relative_ship = [ship[0] - chip[0], ship[2] - chip[0],
+                                     ship[1] - chip[1], ship[3] - chip[1]]
                     ships_in_chip.append(relative_ship)
         if valid_window:
             windows.append(chip)
@@ -277,7 +291,7 @@ def generate_chips(data_type, viz):
                         dst.close()
                 for ship in ships_in_mask:
                     chip_ships_list.append((str(chip_ind) + '.' + data_type,
-                                            ship[0], ship[2], ship[1], ship[3],
+                                            ship[0], ship[1], ship[2], ship[3],
                                             'ship'))
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
@@ -288,42 +302,6 @@ def generate_chips(data_type, viz):
     df = pd.DataFrame.from_records(chip_ships_list, columns=csv_labels)
     csv_write_path = dataset_path + '/train/' + 'ship_locations.csv'
     df.to_csv(csv_write_path, index=False)
-
-
-def visualize(bbox_coords, full1, valid1, src_ds):
-    x, y, x1, y1, x2, y2 = [], [], [], [], [], []
-    full = []
-    for r in full1:
-        full.append([r[0], r[1], r[2], r[3]])
-        full.append([r[0], r[1], r[3], r[2]])
-    valid = []
-    for r in valid1:
-        valid.append([r[0], r[2], r[3], r[1]])
-        valid.append([r[0], r[2], r[1], r[3]])
-    for bbox in bbox_coords:
-            x.append(bbox[2])
-            #x.append(bbox[3])
-            y.append(bbox[0])
-            #y.append(bbox[1])
-    for window in valid:
-        x1.append(window[2])
-        x1.append(window[3])
-        y1.append(window[0])
-        y1.append(window[1])
-    for window in full:
-        x2.append(window[2])
-        x2.append(window[3])
-        y2.append(window[0])
-        y2.append(window[1])
-
-    image = src_ds.read()
-    image = np.transpose(image, [1, 2, 0])
-
-    plt.imshow(image, origin='upper')
-    plt.scatter(x,y, color='red')
-    plt.scatter(x1,y1, color='blue')
-    plt.scatter(x2,y2, color='green')
-    plt.show()
 
 
 def main():
