@@ -172,6 +172,10 @@ def generate_chips(data_type, viz, datasets_path, singapore_path, img_dict,
         ogr_path = dir_path + 'ships_ogr_' + str(img_ind) + '.geojson'
 
         write_path = join(datasets_path, write_dir)
+        try:
+            makedirs(write_path)
+        except:
+            pass
 
         with rasterio.open(src_path) as src_ds:
             flag = raw_input("Generate using " + img_name + "? ('q' to stop) ")
@@ -221,8 +225,8 @@ def generate_chips(data_type, viz, datasets_path, singapore_path, img_dict,
                 for ship in ships_in_mask:
                     write_debug_chip(chip, write_path, data_type, ships_in_mask
                                      )
-                    chip_ships_list.append(chip + '.' + data_type, ship[0],
-                                           ship[1], ship[2], ship[3], 'ship')
+                    chip_ships_list.append((chip + '.' + data_type, ship[0],
+                                           ship[1], ship[2], ship[3], 'ship'))
                 chip_ind += 1
                 print(str(chip_ind) + " chip written")
             if flag == 'q':
@@ -234,7 +238,7 @@ def generate_chips(data_type, viz, datasets_path, singapore_path, img_dict,
     df.to_csv(csv_write_path, index=False)
 
 
-def write_debug_chip(chip, write_path, data_type, ships, write_dir):
+def write_debug_chip(chip, write_path, data_type, ships):
     img_name = chip + '.' + data_type
     img_file_path = join(write_path, img_name)
     debug_path = join(write_path, 'debug')
@@ -242,25 +246,28 @@ def write_debug_chip(chip, write_path, data_type, ships, write_dir):
         makedirs(debug_path)
     except:
         pass
-    img_write_path = join(debug_path, img_name + '_debug.jpg')
+    img_write_path = join(debug_path, chip + '_debug.jpg')
     image = np.array(Image.open(img_file_path), dtype=np.uint8)
 
     # Create figure and axes
     fig, ax = plt.subplots(1)
     for ship in ships:
-        rect = patches.Rectangle((ship[0], ship[1]), ship[2], ship[3],
+        rect = patches.Rectangle((ship[2], ship[0]), ship[3] - ship[2],
+                                 ship[1] - ship[0],
                                  linewidth=1, edgecolor='r',
                                  facecolor='none')
         ax.add_patch(rect)
-    plt.imshow(image, origin='upper')
+    plt.imshow(image, origin='lower')
 
-    plt.save(img_write_path)
+    plt.savefig(img_write_path)
+    plt.close()
 
 
 def generate_all_chips(data_type, viz, datasets_path, singapore_path):
     img_dict = {}
     for img_ind, dir_name in enumerate(folders):
         img_dict[img_ind] = dir_name
+
     active_inds = range(0, 8)  # Train source indices
     write_dir = 'singapore_train/'
     generate_chips(data_type, viz, datasets_path, singapore_path, img_dict, active_inds, write_dir)
