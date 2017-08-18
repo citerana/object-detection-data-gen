@@ -74,6 +74,13 @@ def contains(big, sml):
 
 def create_coordinate_rectangle(rectangle):
     rectangle_js = rectangle['geometry']['coordinates'][0]
+    rect = [
+        min(rectangle_js[0][0], rectangle_js[1][0]),  # minX/left
+        max(rectangle_js[0][0], rectangle_js[1][0]),  # maxX/right
+        min(rectangle_js[0][1], rectangle_js[2][1]),  # minY/bottom
+        max(rectangle_js[0][1], rectangle_js[2][1])   # maxY/top
+    ]
+    print(rect)
     return [
         min(rectangle_js[0][0], rectangle_js[1][0]),  # minX/left
         max(rectangle_js[0][0], rectangle_js[1][0]),  # maxX/right
@@ -83,13 +90,17 @@ def create_coordinate_rectangle(rectangle):
 
 
 def rasterio_index(rect, src):
-    ul = src.index(rect[0], rect[2])
-    lr = src.index(rect[1], rect[3])
+    ul = src.index(rect[0], rect[3])
+    lr = src.index(rect[1], rect[2])
 
     minx = min(ul[0], lr[0])
     maxx = max(ul[0], lr[0])
     miny = min(ul[1], lr[1])
     maxy = max(ul[1], lr[1])
+
+    if miny == maxy:
+        maxy += 20
+        print("I'm bad!", rect[2], rect[3], miny, maxy, minx, maxx)
 
     return [minx, maxx, miny, maxy]
 
@@ -183,6 +194,7 @@ def generate_chips(data_type, viz, datasets_path, singapore_path, img_dict,
                 break
 
             bbox_coords = convert_to_pixels(src_ds, ogr_path, img_corners)
+            print(bbox_coords)
             ship_boxes = [rasterio.coords.BoundingBox(*bbox_ordered_coords(
                           bbox)) for bbox in bbox_coords]
             chip_coords = [expand_window_with_offset(bbox)
@@ -257,7 +269,8 @@ def write_debug_chip(chip, write_path, data_type, ships):
                                  linewidth=1, edgecolor='r',
                                  facecolor='none')
         ax.add_patch(rect)
-    plt.imshow(image, origin='lower')
+
+    plt.imshow(image, origin='upper')
 
     plt.savefig(img_write_path)
     plt.close()
@@ -268,13 +281,13 @@ def generate_all_chips(data_type, viz, datasets_path, singapore_path):
     for img_ind, dir_name in enumerate(folders):
         img_dict[img_ind] = dir_name
 
-    active_inds = range(0, 8)  # Train source indices
+    # active_inds = range(0, 8)  # Train source indices
+    active_inds = [9]
     write_dir = 'singapore_train/'
     generate_chips(data_type, viz, datasets_path, singapore_path, img_dict, active_inds, write_dir)
     active_inds = [8, 9, 10]  # Validation source indices
     write_dir = 'singapore_val/'
     generate_chips(data_type, viz, datasets_path, singapore_path, img_dict, active_inds, write_dir)
-
 
 
 def main():
